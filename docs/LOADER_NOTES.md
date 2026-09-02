@@ -162,3 +162,29 @@ check your weight values, not your kernels.
 4. **Trust dtype tables over narratives.** Both dead ends above were killed by
    a number (a resident tensor at half its disk size; a logprob equal to
    -ln vocab), not by reasoning about code.
+
+## Addendum 2026-09-02: stock vLLM 0.28.0 (route A)
+
+The same pack boots on PyPI vLLM 0.28.0 with the plugin. The first boot loaded
+cleanly, served `200 OK`, and returned **empty text** at 15-17 tok/s: the pack
+config still declared `non_routed_quantization` (fp8), so the plugin delegated
+the BF16 dense linears to the fp8 method, whose `weight_scale_inv` parameters
+were never written. Same family as dead end 2 above, a different symptom.
+
+Fix, in three parts, each necessary:
+
+1. Config: `non_routed_dtype_policy: "bf16_as_stored"` (plugin >= 0.2.3 hands
+   dense linears to the unquantized method). `non_routed_quantization` stays,
+   because the DSpark draft's routed experts (`mtp.*`, source format) still
+   need the delegate; removing it breaks spec decode with
+   `KeyError: 'w13_weight_scale'`.
+2. `flashinfer_sparse.py`: `_o_proj` gets a BF16 branch (Triton inverse-RoPE
+   einsum + `wo_b`), since the deep-GEMM fp8 einsum reads scales that do not
+   exist for a BF16 `wo_a`.
+3. Loader skips: hash-layer `e_score_correction_bias` (target) and
+   `gate.bias_vl` (draft).
+
+Receipts: no spec 11.5 tok/s, coherent; `{"method":"dspark",
+"num_speculative_tokens":3}` 22.3 / 23.6 tok/s at 256 / 512 tokens, mean
+acceptance length 3.47. FlashInfer must be 0.6.18 or newer (`index_topk=192`)
+and `nvcc` on PATH.

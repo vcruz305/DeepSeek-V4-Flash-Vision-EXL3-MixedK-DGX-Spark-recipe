@@ -80,6 +80,12 @@ ARGS=(
   --trust-remote-code
 )
 
+# Opt-in speculative decoding, e.g. SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}'
+# (the pack ships the three DSpark MTP layers as mtp.*). Off by default.
+if [[ -n "${SPEC_CONFIG:-}" ]]; then
+  ARGS+=(--speculative-config "$SPEC_CONFIG")
+fi
+
 echo "vllm ${ARGS[*]}"
 vllm "${ARGS[@]}" &
 SERVE_PID=$!

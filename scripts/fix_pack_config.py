@@ -8,15 +8,23 @@ engine then builds the wrong MoE scaffolding and OOMs). This script:
 
 - backs up ``config.json`` to ``config.json.bak`` (first run only),
 - writes the EXL3 ``quantization_config`` (method, codebook, per-layer
-  ``layer_bits`` **scanned from the actual shard trellis shapes**, and the
-  ``non_routed_quantization`` delegation block),
+  ``layer_bits`` **scanned from the actual shard trellis shapes**, the
+  ``non_routed_quantization`` delegation block, the DSpark MTP expert keys,
+  and the dense-weight policy for the chosen route),
 - removes an empty ``text_config`` key if present (the config is flat; an
   empty nested dict breaks vLLM's text-config extraction),
 - touches nothing else.
 
-Idempotent. Packs downloaded from the Hub after 2026-09-01 already ship this.
+Routes (see README): ``--route a`` (default) is stock vLLM 0.28 with the
+plugin's ``non_routed_dtype_policy: "bf16_as_stored"`` (dense weights served
+BF16, DSpark MTP draft available); ``--route b`` is the fork runtime with
+``"official_source_native"`` (dense weights quantized to block-FP8 at load by
+``patch_dsv4_loader.py``). The two differ only in that one key.
 
-Usage: python scripts/fix_pack_config.py /path/to/DSV4-Flash-Vision-ablit-EXL3-MixedK
+Idempotent. Packs downloaded from the Hub after 2026-09-01 ship the route B
+config; run this once with the default route for stock vLLM.
+
+Usage: python scripts/fix_pack_config.py /path/to/DSV4-Flash-Vision-ablit-EXL3-MixedK [--route a|b]
 """
 
 import glob
@@ -61,11 +69,20 @@ def scan_layer_bits(pack: Path) -> dict[str, int]:
     return out
 
 
+POLICY = {"a": "bf16_as_stored", "b": "official_source_native"}
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
+    argv = sys.argv[1:]
+    route = "a"
+    if "--route" in argv:
+        i = argv.index("--route")
+        route = argv[i + 1].lower() if i + 1 < len(argv) else ""
+        del argv[i : i + 2]
+    if len(argv) != 1 or route not in POLICY:
         print(__doc__)
         return 2
-    pack = Path(sys.argv[1]).expanduser()
+    pack = Path(argv[0]).expanduser()
     cfg_path = pack / "config.json"
     if not cfg_path.is_file():
         print(f"missing {cfg_path}")
@@ -78,11 +95,13 @@ def main() -> int:
         "bits": DEFAULT_BITS,
         "codebook": "mcg",
         "head_bits": 16,
-        "non_routed_dtype_policy": "official_source_native",
+        "non_routed_dtype_policy": POLICY[route],
         "scope": "dsv4_routed_experts_only",
         "serving_reader_qualified": False,
         "version": "0.0.43",
         "layer_bits": layer_bits,
+        "mtp_experts": "source",
+        "mtp_experts_start_layer": 43,
         "non_routed_quantization": {
             "activation_scheme": "dynamic",
             "fmt": "e4m3",
@@ -109,7 +128,7 @@ def main() -> int:
         shutil.copy2(cfg_path, bak)
         print(f"backed up original to {bak.name}")
     cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
-    print(f"wrote {cfg_path}")
+    print(f"wrote {cfg_path} (route {route}: {POLICY[route]})")
     print(f"  layer_bits (non-default layers): {layer_bits or '{} (uniform)'}")
     return 0
 

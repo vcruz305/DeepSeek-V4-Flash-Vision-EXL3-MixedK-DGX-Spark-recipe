@@ -2,7 +2,9 @@
 
 ## What this is
 Serving recipe for DeepSeek-V4-Flash-Vision EXL3 MixedK (full 256 experts) on
-one NVIDIA DGX Spark (GB10) with a vLLM fork runtime + the vllm-exl3 plugin.
+one NVIDIA DGX Spark (GB10) with the vllm-exl3 plugin on either stock vLLM
+0.28.0 (route A, DSpark MTP spec decode, `scripts/patch_dsv4_stock028.py`) or
+the prebuilt vLLM fork runtime (route B, `scripts/patch_dsv4_loader.py`).
 Serving-side only: never document how the pack was produced.
 
 ## Ground rules
@@ -13,8 +15,13 @@ Serving-side only: never document how the pack was produced.
 
 ## The load-bearing facts
 - The pack's non-routed weights are BF16 on disk with NO scale tensors; the
-  fork's forward path is fp8-specialized. `scripts/patch_dsv4_loader.py`
-  quantizes them to real 128x128 block-FP8 at load. Do not "simplify" this to
+  nvidia forward path is fp8-specialized. Route B (`patch_dsv4_loader.py`)
+  quantizes them to real 128x128 block-FP8 at load. Route A keeps them BF16:
+  the config's `non_routed_dtype_policy: "bf16_as_stored"` makes the plugin
+  (>= 0.2.3) use vLLM's unquantized linear method for dense layers, and
+  `patch_dsv4_stock028.py` adds the bf16 `_o_proj` branch. The two policies
+  are not interchangeable: BF16 tensors under the fp8 delegate load without
+  error and produce empty text (route A) or uniform logits (route B). Do not "simplify" this to
   a dtype cast — casting without computed scales produces uniform logits
   (every token at -ln(vocab), endless BOS).
 - Layers 0-2 are hash-routed (`tid2eid` is real); their `gate.bias` and every
