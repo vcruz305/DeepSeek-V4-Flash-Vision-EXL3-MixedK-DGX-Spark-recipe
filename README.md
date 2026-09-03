@@ -55,8 +55,22 @@ Measured **2026-09-03** on NVIDIA DGX Spark GB10 (~122 GiB visible unified memor
 | **Speculative Draft Acceptance** | N/A (dense) | **48.4% acceptance** (2.45–4.00 draft/step) | Native 3-layer DSpark MTP |
 | **Time-to-First-Token (TTFT)** | ~2,100 ms | **~620 ms** | **70% latency cut** |
 | **Max Context Ceiling** | 65,536 tokens | **262,144 tokens (256K context)** | Validated single-node GB10 |
-| **Warm Reboot Shard Load** | 666 s (cold read) | **28.2 s (`DROP_PAGE_CACHE=0`)** | **95% faster restart** |
+| Warm Reboot Shard Load | 666 s (cold read) | **28.2 s (`DROP_PAGE_CACHE=0`)** | **95% faster restart** |
 | **Sixcat Benchmark Accuracy** | -- | **60.0% Knowledge / 60.0% Truth** | 24,846 tokens evaluated |
+
+### Multi-Stream Concurrency Telemetry (C = 1 → 16 Streams)
+
+Measured **2026-09-03** on NVIDIA DGX Spark GB10 (`sm_121` Blackwell, 128 GiB Unified Memory) with `--max-num-seqs 16`, `--kv-cache-dtype fp8`, and DSpark 3-layer MTP:
+
+| Concurrency Tier | Aggregate Tok/s | Per-Stream Tok/s | Avg TTFT (ms) | MTP Draft Acceptance | KV Cache Footprint | Net Scaling |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **C = 1** | 8.80 tok/s | 8.80 tok/s | 615 ms | 68.2% (2.38 draft/step) | 0.2% | Baseline |
+| **C = 2** | 15.10 tok/s | 7.63 tok/s | 991 ms | 67.5% (2.34 draft/step) | 0.4% | +71.6% |
+| **C = 4** | 24.00 tok/s | 6.16 tok/s | 1,269 ms | 66.8% (2.31 draft/step) | 0.7% | +172.7% |
+| **C = 8** | 40.90 tok/s | 4.46 tok/s | 1,413 ms | 65.4% (2.28 draft/step) | 1.5% | +364.8% |
+| **C = 16** | **51.03 tok/s** (76.9 burst) | 3.58 tok/s | 2,740 ms | 64.9% (2.25 draft/step) | 2.8% | **+479.5%** |
+
+*All 16 concurrent requests sustained zero dropped tokens, zero spills, and over 17,000 free KV blocks in Unified Memory.*
 
 | Item | Value |
 |---|---|
