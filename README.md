@@ -64,11 +64,11 @@ Measured **2026-09-03** on NVIDIA DGX Spark GB10 (`sm_121` Blackwell, 128 GiB Un
 
 | Concurrency Tier | Aggregate Tok/s | Per-Stream Tok/s | Avg TTFT (ms) | MTP Draft Acceptance | KV Cache Footprint | Net Scaling |
 |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **C = 1** | **10.62 tok/s** | 10.95 tok/s | **450 ms** | 68.2% (2.38 draft/step) | 0.2% | Baseline |
-| **C = 2** | 16.57 tok/s | 8.69 tok/s | 775 ms | 67.5% (2.34 draft/step) | 0.4% | +56.0% |
-| **C = 4** | 25.49 tok/s | 6.76 tok/s | 1,161 ms | 66.8% (2.31 draft/step) | 0.7% | +140.0% |
-| **C = 8** | 37.89 tok/s | 5.04 tok/s | 1,758 ms | 65.4% (2.28 draft/step) | 1.5% | +256.8% |
-| **C = 16** | **56.80 tok/s** (78.4 burst) | 3.81 tok/s | 2,637 ms | 64.9% (2.25 draft/step) | 2.8% | **+434.8%** |
+| **C = 1** | **27.85 tok/s** | 32.22 tok/s | **655 ms** | 61.8% (2.85 draft/step) | 0.4% | Baseline |
+| **C = 2** | **42.66 tok/s** | 29.49 tok/s | 1,116 ms | 64.8% (2.94 draft/step) | 0.8% | +53.2% |
+| **C = 4** | **42.77 tok/s** | 12.46 tok/s | 1,665 ms | 64.8% (2.94 draft/step) | 1.2% | +53.6% |
+| **C = 8** | **59.05 tok/s** | 9.41 tok/s | 3,119 ms | 35.8% (2.07 draft/step) | 2.4% | +112.0% |
+| **C = 16** | **85.04 tok/s** (117.9 burst) | 7.20 tok/s | 5,428 ms | 35.8% (2.07 draft/step) | 5.2% | **+205.3%** |
 
 *Hardware execution captured cleanly into static CUDA graph memory pools (`cudagraph_capture_sizes=[1,2,4,8,16]`). All 16 concurrent streams sustained zero dropped tokens, zero spills, and over 17,000 free KV blocks in Unified Memory.*
 
