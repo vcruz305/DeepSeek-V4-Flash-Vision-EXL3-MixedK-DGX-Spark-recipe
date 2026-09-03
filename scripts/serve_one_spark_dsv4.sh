@@ -12,6 +12,8 @@ if ! command -v nvcc >/dev/null 2>&1; then
   for d in /usr/local/cuda-13.0/bin /usr/local/cuda/bin; do
     if [[ -x "$d/nvcc" ]]; then export PATH="$d:$PATH"; echo "nvcc was not on PATH; added $d"; break; fi
   done
+fi
+
 # Target Python virtual environment for DeepSeek-V4 Flash Vision.
 # Must use vllm-vl (0.28.1rc1.dev324 with PR #54566) which contains the native
 # DeepSeek-V4 DSpark MTP implementation (dspark.py / mtp.py), not glm53-exl3-local.
