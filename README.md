@@ -9,10 +9,10 @@ This pack keeps the **full 256 routed experts** (no expert pruning) at a **mixed
 non-routed weights kept in their official source formats, and it ships the
 **vision tower, aligner and the three DSpark MTP draft layers**.
 
-The recommended path is **vLLM nightly + the vllm-exl3 plugin**: it serves
-**text and images** from this pack on one GB10 (verified 2026-09-02). Until the
-nightly's vision class accepts the DSpark draft, the fastest **text-only** serve
-is stock vLLM 0.28.0 with the draft on (22-24 tok/s). Every patch shipped here
+The recommended path is **vLLM nightly + the vllm-exl3 plugin** with the
+pack's **DSpark draft on**: it serves **text and images** from one process on
+one GB10 at **~20 tok/s** (verified 2026-09-02). Stock vLLM 0.28.0 is the
+text-only alternative (22-24 tok/s, no vision class). Every patch shipped here
 is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 [`docs/ROUTE_B_FORK.md`](docs/ROUTE_B_FORK.md).
 
@@ -22,7 +22,7 @@ is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 | What | Where |
 |---|---|
 | **Pack** | [vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK](https://huggingface.co/vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK): 48 shards, ~95 GB, full 256 experts |
-| **Runtime** | vLLM nightly (text + vision) or stock vLLM 0.28.0 (text + DSpark draft), both from PyPI; the prebuilt fork wheels are the archived route |
+| **Runtime** | vLLM nightly (text + vision + DSpark draft) or stock vLLM 0.28.0 (text + DSpark draft), both from PyPI; the prebuilt fork wheels are the archived route |
 | **Plugin** | [vcruz305/vllm-exl3](https://github.com/vcruz305/vllm-exl3): the EXL3 quantization plugin's canonical home (`--quantization exl3`) |
 | **This repo** | loader patches, pack-config repair, serve script, memory census, and [`docs/LOADER_NOTES.md`](docs/LOADER_NOTES.md) |
 | Engine | vLLM `--quantization exl3`, TP=1, enforce-eager, fp8 KV; served model name `DSV4-Flash` |
@@ -31,28 +31,31 @@ is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 
 ## Headline (what is verified)
 
-### Text + vision: vLLM nightly (recommended)
+### Text + vision + DSpark draft: vLLM nightly (recommended)
 
 Measured **2026-09-02** on one GB10 (~122 GiB visible unified memory),
-enforce-eager, greedy, `--kv-cache-dtype fp8`, first-boot settings
-(`GPU_MEM_UTIL=0.85 MAX_MODEL_LEN=16384`).
+enforce-eager, greedy, `--kv-cache-dtype fp8`, `MAX_MODEL_LEN=16384`. Two
+boots: the vision class alone (util 0.85), then the same class with the pack's
+DSpark draft (util 0.88, `{"method":"dspark","num_speculative_tokens":3}`).
 
 | Item | Value |
 |---|---|
 | Runtime | vLLM nightly **0.28.1rc1.dev324** (contains [vllm#54566](https://github.com/vllm-project/vllm/pull/54566)) · exllamav3 1.4.5 with its compiled `exllamav3_ext` · flashinfer-python 0.6.18 · torch 2.13 · vllm-exl3 >= 0.2.3 |
 | Architecture | `DeepseekV4ForConditionalGeneration`, picked automatically from `vision_n_layers` in the config; vision tower, aligner and image specials load from the pack (0.93 GB BF16), all 1708 parameters mapped, none skipped |
 | Non-routed weights | **BF16 as stored** (`non_routed_dtype_policy: "bf16_as_stored"`) |
-| Load | 666 s from NVMe; host memory flat for the whole load with the stream-load patch |
-| Serve | `max-model-len 16384`, util 0.85 → GPU KV cache **151,575 tokens** (9.25x concurrency at 16k) |
-| Image probes | synthetic red/blue PNG (149 image tokens): "A large red square with a smaller blue square in its top-left corner"; position and colour-count questions answered correctly |
+| Draft | the pack's three DSpark MTP layers (`mtp.0..2`) load into the nightly's draft class unchanged: its MoE gate creates `bias_vl` for vision checkpoints, so no loader patch is needed |
+| Load | 666 s from NVMe (no draft) / ~750 s (with draft); host memory flat for the whole load with the stream-load patch |
+| Serve | util 0.85, no draft → GPU KV cache **151,575 tokens** (9.25x concurrency at 16k); util 0.88 with the draft → **84,554 tokens** (5.16x) |
+| Image probes | synthetic red/blue PNG (149 image tokens): "A large red square with a smaller blue square in its top-left corner"; position and colour-count questions answered correctly, with and without the draft |
 | Text | identity and technical prompts coherent, same answers as the text-only route |
-| Decode | **8.5-10.8 tok/s** (BF16 dense path, no draft); the first image request pays ~13 s of one-time TileLang/Triton JIT |
+| Decode, no draft | **8.5-10.8 tok/s** (BF16 dense path); the first image request pays ~13 s of one-time TileLang/Triton JIT |
+| Decode, dspark3 | **19.7 tok/s** text (84 tokens), **16-20 tok/s** on image questions, **14.8 tok/s** on a 256-token technical answer; mean acceptance length 2.3-3.2 on short answers, 1.9 on the long one |
 
 Three serving-side patches make this work (see the tables below): the stock
 0.28.0 patch, a streaming weight loader for the vision class, and a sliced
 prefill for the wide sliding-window rows the vision class produces on SM120/121.
 
-### Text only, fastest today: stock vLLM 0.28.0 + DSpark speculative decoding
+### Text only: stock vLLM 0.28.0 + DSpark speculative decoding
 
 Measured **2026-09-02** on one GB10 (~122 GiB visible unified memory),
 enforce-eager, greedy 256/512-token completions, `--kv-cache-dtype fp8`.
@@ -72,7 +75,7 @@ The same pack, the same shards, no fork: `pip install vllm==0.28.0`, the plugin,
 (non-routed weights quantized to block-FP8 at load, 15.9 tok/s without a draft,
 text only) is archived in [`docs/ROUTE_B_FORK.md`](docs/ROUTE_B_FORK.md).
 
-## Speed: why ~10 tok/s today, and what is coming
+## Speed: where the time goes, and what is coming
 
 Single-sequence decode on a GB10 is a memory-bandwidth problem. Every token
 reads the six active experts (EXL3, 2-3 bits) plus **every non-routed tensor**
@@ -83,16 +86,16 @@ time in those dense BF16 linears, and requantizing them to EXL3 with the
 plugin's overlay tool gave **1.80x** no-draft decode. The numbers here line up:
 BF16 dense path 11.5 tok/s (text route) and 8.5-10.8 tok/s (vision class),
 fp8-at-load dense path 15.9 tok/s (fork), and the DSpark draft roughly doubles
-whatever the dense path gives (22-24 tok/s).
+whatever the dense path gives (22-24 tok/s text-only, ~20 tok/s on the vision
+class).
 
 In order of payoff, what is being wired next for the recommended route:
 
-1. **DSpark draft on the vision class.** The nightly's VL weight mapper drops
-   the `mtp.*` tensors, so the draft that gives 2x on the text route is not
-   loaded yet. Loader-mapping work, no new kernels.
-2. **Dense EXL3 overlay** for the non-routed linears (vllm-exl3
+1. **Dense EXL3 overlay** for the non-routed linears (vllm-exl3
    `tools/dense_overlay.py`, 1.80x on GLM), which stacks with the draft.
-3. **CUDA graphs.** Every number above is `--enforce-eager`.
+2. **CUDA graphs.** Every number above is `--enforce-eager`.
+3. **Higher util and context** once a box has a clean first boot: the draft
+   run above left 9 GiB of host memory free at util 0.88 / 16k context.
 
 ## Requirements
 
@@ -129,11 +132,10 @@ python scripts/patch_dsv4_stock028.py            # stock 0.28.0 and the nightly
 python scripts/patch_dsv4_vl_stream_load.py      # nightly only: stream the vision-class load
 python scripts/patch_dsv4_vl_sm120_wide_swa.py   # nightly only: wide window rows on SM120/121
 
-# 3a) Serve text + vision (nightly). These are the verified first-boot settings;
-#     raise them once a boot is clean on your box.
-MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
-  GPU_MEM_UTIL=0.85 MAX_MODEL_LEN=16384 \
-  bash scripts/serve_one_spark_dsv4.sh
+# 3a) Serve text + vision with the DSpark draft (nightly). Verified settings;
+#     raise util/context once a boot is clean on your box. Drop SPEC_CONFIG for
+#     the no-draft class (more KV, half the speed).
+MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK   GPU_MEM_UTIL=0.88 MAX_MODEL_LEN=16384   SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}'   bash scripts/serve_one_spark_dsv4.sh
 
 # 3b) Serve text only with the DSpark draft (stock 0.28.0)
 MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
@@ -248,9 +250,9 @@ The fork route's loader patch is described in
 
 - **Vision needs the nightly.** Stock 0.28.0 and the fork serve the text
   class and skip the vision tensors.
-- **The DSpark draft is text-only today.** The nightly's vision-class weight
-  mapper drops `mtp.*`; the draft runs on stock 0.28.0 (22-24 tok/s) and is the
-  next item for the vision route. The fork loader skips the draft too.
+- **Acceptance drops on long technical answers.** The draft gives 2.3-3.2
+  accepted tokens per step on short answers and ~1.9 on a 256-token technical
+  one (14.8 tok/s). The fork loader skips the draft entirely.
 - **Context verified so far:** 65,536 on the text route; 16,384 on the vision
   route (first-boot settings, the KV pool allows far more). >64k behavior on
   this model has not been measured.
