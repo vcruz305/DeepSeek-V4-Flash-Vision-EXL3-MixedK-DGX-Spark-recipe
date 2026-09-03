@@ -348,6 +348,22 @@ for this pack: 96.47 GiB exceeds 90 percent of available RAM.
 | [GLM-5.3-Flash-EXL3-K2-DGX-Spark-recipe](https://github.com/vcruz305/GLM-5.3-Flash-EXL3-K2-DGX-Spark-recipe) | the sibling GLM recipe |
 | [GLM-5.3-Flash-EXL3-K2K3-mix-DGX-Spark-recipe](https://github.com/vcruz305/GLM-5.3-Flash-EXL3-K2K3-mix-DGX-Spark-recipe) | the GLM mixed-K sibling |
 
+## Credits and upstream work
+
+This work builds on other people's, and two projects in particular.
+
+**ExLlamaV3 by Turboderp ([@turboderp](https://github.com/turboderp/exllamav3)).** The EXL3 trellis
+format, the MCG codebook and the quantization method are theirs. MIT, Copyright (c) 2025 Turboderp.
+
+**GLM-5.3-Flash-EXL3-2x-DGX-Sparks by Mia's AI Lab
+([@MiaAI-Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks)), with
+[@plotarmordev](https://github.com/plotarmordev).** No code from that project is copied here. They are credited because this recipe serves EXL3 packs through vllm-exl3, whose plugin derives from their `overlay/exl3.py`, and because their published findings on GB10 unified memory, long-prefill scheduling and hybrid KV accounting informed this documentation. MIT, Copyright (c) 2026 Mia's AI Lab.
+
+Both licences require their notices to travel with the code. Those notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and must be retained on redistribution. Earlier
+releases of this repository carried this without those notices. That was our oversight, and this
+section corrects it.
+
 ## License
 
 Apache-2.0. If this recipe or its measurements are useful to you, please
