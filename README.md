@@ -2,6 +2,18 @@
 
 [![Follow on X](https://img.shields.io/badge/Follow-%40ViC305-black?logo=x)](https://x.com/ViC305) [![Follow on Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Follow-vcruz305-yellow)](https://huggingface.co/vcruz305)
 
+> ### Built on the work of others
+>
+> The EXL3 trellis format, the MCG codebook and the quantization method this recipe serves are [ExLlamaV3](https://github.com/turboderp/exllamav3) by Turboderp ([@turboderp](https://github.com/turboderp)).
+>
+> [Mia's AI Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks) ([@MiaAI-Lab](https://github.com/MiaAI-Lab), [@plotarmordev](https://github.com/plotarmordev)) are credited here because this recipe serves EXL3 packs through `vllm-exl3`, whose plugin is
+> derived from their `overlay/exl3.py`, and because their published findings on GB10 unified memory,
+> long-prefill scheduling and hybrid KV accounting informed this README. No code from their project is
+> copied into this repository.
+>
+> Both projects are MIT licensed. Their notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+> Thank you to both projects for the work this is built on.
+
 Reproducible **vLLM** recipe for **[vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK](https://huggingface.co/vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK)** on a **single NVIDIA DGX Spark / GB10 (SM121)**.
 
 This pack keeps the **full 256 routed experts** (no expert pruning) at a **mixed
