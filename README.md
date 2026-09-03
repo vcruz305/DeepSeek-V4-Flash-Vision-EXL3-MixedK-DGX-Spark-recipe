@@ -24,7 +24,7 @@ is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 | **Pack** | [vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK](https://huggingface.co/vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK): 48 shards, ~95 GB, full 256 experts |
 | **Runtime** | vLLM nightly (text + vision + DSpark draft) or stock vLLM 0.28.0 (text + DSpark draft), both from PyPI; the prebuilt fork wheels are the archived route |
 | **Plugin** | [vcruz305/vllm-exl3](https://github.com/vcruz305/vllm-exl3): the EXL3 quantization plugin's canonical home (`--quantization exl3`) |
-| **This repo** | loader patches, pack-config repair, serve script, memory census, and [`docs/LOADER_NOTES.md`](docs/LOADER_NOTES.md) |
+| **This repo** | loader patches, pack-config repair, serve script, vision probe, memory census, [`docs/LOADER_NOTES.md`](docs/LOADER_NOTES.md) and [`docs/TEST_VISION.md`](docs/TEST_VISION.md) |
 | Engine | vLLM `--quantization exl3`, TP=1, enforce-eager, fp8 KV; served model name `DSV4-Flash` |
 
 ---
@@ -34,9 +34,10 @@ is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 ### Text + vision + DSpark draft: vLLM nightly (recommended)
 
 Measured **2026-09-02** on one GB10 (~122 GiB visible unified memory),
-enforce-eager, greedy, `--kv-cache-dtype fp8`, `MAX_MODEL_LEN=16384`. Two
-boots: the vision class alone (util 0.85), then the same class with the pack's
-DSpark draft (util 0.88, `{"method":"dspark","num_speculative_tokens":3}`).
+enforce-eager, greedy, `--kv-cache-dtype fp8`. Boots: the vision class alone
+(util 0.85, 16k), the same class with the pack's DSpark draft (util 0.88,
+`{"method":"dspark","num_speculative_tokens":3}`, 16k), then the draft boot
+again at `MAX_MODEL_LEN=65536` and with tool calling on.
 
 | Item | Value |
 |---|---|
@@ -45,7 +46,9 @@ DSpark draft (util 0.88, `{"method":"dspark","num_speculative_tokens":3}`).
 | Non-routed weights | **BF16 as stored** (`non_routed_dtype_policy: "bf16_as_stored"`) |
 | Draft | the pack's three DSpark MTP layers (`mtp.0..2`) load into the nightly's draft class unchanged: its MoE gate creates `bias_vl` for vision checkpoints, so no loader patch is needed |
 | Load | 666 s from NVMe (no draft) / ~750 s (with draft); host memory flat for the whole load with the stream-load patch |
-| Serve | util 0.85, no draft → GPU KV cache **151,575 tokens** (9.25x concurrency at 16k); util 0.88 with the draft → **84,554 tokens** (5.16x) |
+| Serve | util 0.85, no draft, 16k → GPU KV cache **151,575 tokens**; util 0.88 with the draft → **84,554 tokens** at 16k and **298,380-328,319 tokens** at 64k (4.6-5.0x concurrency for 64k requests; the nightly sizes the pool from `max-model-len`) |
+| Context | **65,536** verified with the draft: a 47,947-token prompt prefilled in 148 s (~324 tok/s), `MemAvailable` never below 8.3 GiB, no watchdog action, answers unchanged |
+| Tool calling | `--enable-auto-tool-choice --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4` (on by default in the serve script): `tool_choice: "auto"` returns `finish_reason: tool_calls` with parsed arguments, thinking lands in `reasoning_content`, `content` holds only the answer. Verified from Hermes Agent and Open WebUI |
 | Image probes | synthetic red/blue PNG (149 image tokens): "A large red square with a smaller blue square in its top-left corner"; position and colour-count questions answered correctly, with and without the draft |
 | Text | identity and technical prompts coherent, same answers as the text-only route |
 | Decode, no draft | **8.5-10.8 tok/s** (BF16 dense path); the first image request pays ~13 s of one-time TileLang/Triton JIT |
@@ -94,8 +97,9 @@ In order of payoff, what is being wired next for the recommended route:
 1. **Dense EXL3 overlay** for the non-routed linears (vllm-exl3
    `tools/dense_overlay.py`, 1.80x on GLM), which stacks with the draft.
 2. **CUDA graphs.** Every number above is `--enforce-eager`.
-3. **Higher util and context** once a box has a clean first boot: the draft
-   run above left 9 GiB of host memory free at util 0.88 / 16k context.
+3. **Higher util** once a box has a clean first boot: the 64k draft run above
+   left 8-9 GiB of host memory free at util 0.88, and the KV pool at 64k holds
+   far more than one request, so 131072 is the next context step.
 
 ## Requirements
 
@@ -132,10 +136,15 @@ python scripts/patch_dsv4_stock028.py            # stock 0.28.0 and the nightly
 python scripts/patch_dsv4_vl_stream_load.py      # nightly only: stream the vision-class load
 python scripts/patch_dsv4_vl_sm120_wide_swa.py   # nightly only: wide window rows on SM120/121
 
-# 3a) Serve text + vision with the DSpark draft (nightly). Verified settings;
-#     raise util/context once a boot is clean on your box. Drop SPEC_CONFIG for
-#     the no-draft class (more KV, half the speed).
-MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK   GPU_MEM_UTIL=0.88 MAX_MODEL_LEN=16384   SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}'   bash scripts/serve_one_spark_dsv4.sh
+# 3a) Serve text + vision with the DSpark draft (nightly). Verified settings
+#     (64k context; use MAX_MODEL_LEN=16384 for a conservative first boot).
+#     Drop SPEC_CONFIG for the no-draft class (more KV, half the speed).
+#     Tool calling and reasoning separation are on by default
+#     (TOOL_CALL_PARSER="" or REASONING_PARSER="" turn them off).
+MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
+  GPU_MEM_UTIL=0.88 MAX_MODEL_LEN=65536 \
+  SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}' \
+  bash scripts/serve_one_spark_dsv4.sh
 
 # 3b) Serve text only with the DSpark draft (stock 0.28.0)
 MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
@@ -149,10 +158,19 @@ curl -s http://127.0.0.1:8899/v1/completions -H 'content-type: application/json'
 IMG=$(base64 -w0 test.png)
 curl -s http://127.0.0.1:8899/v1/chat/completions -H 'content-type: application/json' \
   -d "{\"model\":\"DSV4-Flash\",\"max_tokens\":64,\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,$IMG\"}},{\"type\":\"text\",\"text\":\"Describe this image in one sentence.\"}]}]}"
+
+# 5) Or the one-file probe: draws a test card when no image is given, prints
+#    the answer plus token counts and tok/s (any machine with Python and Pillow)
+python scripts/vision_probe.py                      # test card
+python scripts/vision_probe.py photo.jpg "What is this?" http://127.0.0.1:8899
 ```
 
-The model thinks by default; the answer follows the `</think>` marker in the
-returned content.
+The model thinks by default. With the reasoning parser on (the default) the
+thinking arrives in `reasoning_content` and `content` holds only the answer;
+with `REASONING_PARSER=""` the answer follows a `</think>` marker inside
+`content`. Testing from another machine (port forward, harness settings,
+Hermes Agent and Open WebUI, healthy-server numbers, troubleshooting) is
+written up in [`docs/TEST_VISION.md`](docs/TEST_VISION.md).
 
 ## The pack-config contract
 
@@ -253,9 +271,9 @@ The fork route's loader patch is described in
 - **Acceptance drops on long technical answers.** The draft gives 2.3-3.2
   accepted tokens per step on short answers and ~1.9 on a 256-token technical
   one (14.8 tok/s). The fork loader skips the draft entirely.
-- **Context verified so far:** 65,536 on the text route; 16,384 on the vision
-  route (first-boot settings, the KV pool allows far more). >64k behavior on
-  this model has not been measured.
+- **Context verified so far:** 65,536 on both routes (a 48k-token prompt on
+  the vision route). The 64k KV pool holds several such requests, so 131072
+  should fit at the same util; it has not been measured yet.
 - **Plugin required.** Upstream declined EXL3 support
   ([vllm#19896](https://github.com/vllm-project/vllm/issues/19896)); every
   route needs the vllm-exl3 plugin plus the patches above until they are

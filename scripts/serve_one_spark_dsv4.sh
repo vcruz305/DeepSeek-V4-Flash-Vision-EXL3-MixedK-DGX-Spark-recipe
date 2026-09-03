@@ -86,6 +86,20 @@ if [[ -n "${SPEC_CONFIG:-}" ]]; then
   ARGS+=(--speculative-config "$SPEC_CONFIG")
 fi
 
+# Tool calling and reasoning separation, on by default so agent harnesses
+# (Hermes, OpenClaw, Cline, ...) can send tools with tool_choice "auto" and
+# receive the model's thinking in reasoning_content instead of the answer.
+# The nightly ships DeepSeek-V4 parsers under the name "deepseek_v4".
+# Set TOOL_CALL_PARSER="" or REASONING_PARSER="" to turn either off.
+TOOL_CALL_PARSER="${TOOL_CALL_PARSER-deepseek_v4}"
+REASONING_PARSER="${REASONING_PARSER-deepseek_v4}"
+if [[ -n "$TOOL_CALL_PARSER" ]]; then
+  ARGS+=(--enable-auto-tool-choice --tool-call-parser "$TOOL_CALL_PARSER")
+fi
+if [[ -n "$REASONING_PARSER" ]]; then
+  ARGS+=(--reasoning-parser "$REASONING_PARSER")
+fi
+
 echo "vllm ${ARGS[*]}"
 vllm "${ARGS[@]}" &
 SERVE_PID=$!
