@@ -38,11 +38,11 @@ GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.92}"
 SERVED_NAME="${SERVED_NAME:-DSV4-Flash}"
 
 if [[ ! -f "$MODEL_DIR/config.json" ]]; then
-  echo "missing $MODEL_DIR/config.json — download the pack first" >&2
+  echo "missing $MODEL_DIR/config.json â€” download the pack first" >&2
   exit 1
 fi
 if ! python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); sys.exit(0 if (c.get("quantization_config") or {}).get("quant_method")=="exl3" else 1)' "$MODEL_DIR/config.json"; then
-  echo "config.json does not declare quant_method=exl3 — run scripts/fix_pack_config.py first" >&2
+  echo "config.json does not declare quant_method=exl3 â€” run scripts/fix_pack_config.py first" >&2
   echo "(a leftover fp8 declaration silently overrides --quantization exl3 and the load OOMs)" >&2
   exit 1
 fi
@@ -94,7 +94,7 @@ if [[ -n "$LOAD_STRATEGY" ]]; then ARGS+=(--safetensors-load-strategy "$LOAD_STR
 ARGS+=(
   --kv-cache-dtype fp8
   --gpu-memory-utilization "$GPU_MEM_UTIL"
-  --no-enable-prefix-caching
+  --enable-prefix-caching --long-prefill-token-threshold 1024
   --trust-remote-code
 )
 

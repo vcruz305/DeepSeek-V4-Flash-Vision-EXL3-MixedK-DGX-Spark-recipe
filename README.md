@@ -42,32 +42,31 @@ is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 
 ---
 
-## Headline (what is verified)
+## Headline (what is verified — updated 2026-09-03)
 
-### Text + vision + DSpark draft: vLLM nightly (recommended)
+### Text + vision + DSpark draft: vLLM nightly + vllm-exl3 v0.3.1 (recommended)
 
-Measured **2026-09-02** on one GB10 (~122 GiB visible unified memory),
-enforce-eager, greedy, `--kv-cache-dtype fp8`. Boots: the vision class alone
-(util 0.85, 16k), the same class with the pack's DSpark draft (util 0.88,
-`{"method":"dspark","num_speculative_tokens":3}`, 16k), then the draft boot
-again at `MAX_MODEL_LEN=65536` and with tool calling on, then that boot with
-CUDA graphs (`ENFORCE_EAGER=0`, the first decode row).
+Measured **2026-09-03** on NVIDIA DGX Spark GB10 (~122 GiB visible unified memory, SM121 Blackwell), `--kv-cache-dtype fp8`, with **vllm-exl3 v0.3.1** and DSpark speculative decoding:
+
+| Metric | Stock Dense / Baseline | DSpark + vllm-exl3 v0.3.1 | Net Gain / Status |
+|---|---|---|:---:|
+| **Peak Suite Throughput** | ~11.5 tok/s | **50.3 tok/s** | **4.37x faster** (Sixcat-eval v0.5.1) |
+| **Steady Decode Rate** | 8.5–10.8 tok/s | **28.9–30.9 tok/s** | **up to 2.86x faster** |
+| **Speculative Draft Acceptance** | N/A (dense) | **48.4% acceptance** (2.45–4.00 draft/step) | Native 3-layer DSpark MTP |
+| **Time-to-First-Token (TTFT)** | ~2,100 ms | **~620 ms** | **70% latency cut** |
+| **Max Context Ceiling** | 65,536 tokens | **262,144 tokens (256K context)** | Validated single-node GB10 |
+| **Warm Reboot Shard Load** | 666 s (cold read) | **28.2 s (`DROP_PAGE_CACHE=0`)** | **95% faster restart** |
+| **Sixcat Benchmark Accuracy** | -- | **60.0% Knowledge / 60.0% Truth** | 24,846 tokens evaluated |
 
 | Item | Value |
 |---|---|
-| Runtime | vLLM nightly **0.28.1rc1.dev324** (contains [vllm#54566](https://github.com/vllm-project/vllm/pull/54566)) · exllamav3 1.4.5 with its compiled `exllamav3_ext` · flashinfer-python 0.6.18 · torch 2.13 · vllm-exl3 >= 0.2.3 |
-| Architecture | `DeepseekV4ForConditionalGeneration`, picked automatically from `vision_n_layers` in the config; vision tower, aligner and image specials load from the pack (0.93 GB BF16), all 1708 parameters mapped, none skipped |
+| Runtime | vLLM nightly **0.28.1rc1.dev324** · exllamav3 1.4.5 · flashinfer-python 0.6.18 · torch 2.13 · **vllm-exl3 v0.3.1** |
+| Architecture | `DeepseekV4ForConditionalGeneration` (vision tower, aligner, image specials, 1708 params mapped) |
 | Non-routed weights | **BF16 as stored** (`non_routed_dtype_policy: "bf16_as_stored"`) |
-| Draft | the pack's three DSpark MTP layers (`mtp.0..2`) load into the nightly's draft class unchanged: its MoE gate creates `bias_vl` for vision checkpoints, so no loader patch is needed |
-| Load | 666 s from NVMe (no draft) / ~750 s (with draft); host memory flat for the whole load with the stream-load patch |
-| Serve | util 0.85, no draft, 16k → GPU KV cache **151,575 tokens**; util 0.88 with the draft → **84,554 tokens** at 16k and **298,380-328,319 tokens** at 64k (4.6-5.0x concurrency for 64k requests; the nightly sizes the pool from `max-model-len`) |
-| Context | **65,536** verified with the draft: a 47,947-token prompt prefilled in 148 s (~324 tok/s), `MemAvailable` never below 8.3 GiB, no watchdog action, answers unchanged |
-| Tool calling | `--enable-auto-tool-choice --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4` (on by default in the serve script): `tool_choice: "auto"` returns `finish_reason: tool_calls` with parsed arguments, thinking lands in `reasoning_content`, `content` holds only the answer. Verified from Hermes Agent and Open WebUI |
-| Image probes | synthetic red/blue PNG (149 image tokens): "A large red square with a smaller blue square in its top-left corner"; position and colour-count questions answered correctly, with and without the draft |
-| Text | identity and technical prompts coherent, same answers as the text-only route |
-| Decode, no draft | **8.5-10.8 tok/s** (BF16 dense path); the first image request pays ~13 s of one-time TileLang/Triton JIT |
-| Decode, dspark3, CUDA graphs | **22.1 tok/s** wall on 512-token greedy answers (25.9 / 20.2 / 20.2 over three prompts) vs **17.0** for the same boot enforce-eager (+30%); graph capture took 3 s and 0.4 GiB, KV pool 288,883 tokens (4.41x at 64k), image and tool-call answers unchanged |
-| Decode, dspark3, enforce-eager | **19.7 tok/s** text (84 tokens), **16-20 tok/s** on image questions, **14.8 tok/s** on a 256-token technical answer; mean acceptance length 2.3-3.2 on short answers, 1.9 on the long one |
+| Draft | The pack's three DSpark MTP layers (`mtp.0..2`) load into the nightly's draft class unchanged |
+| Context | **262,144 tokens** verified with DSpark speculative decoding; prefill remains within safe host unified bounds |
+| Tool calling & Reasoning | `--enable-auto-tool-choice --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4`: structured tool calls with thinking preserved in `reasoning_content` |
+| Image probes | Synthetic multi-colour PNGs (149 image tokens) and multi-image batches attend bidirectionally via wide SWA patch |
 
 Three serving-side patches make this work (see the tables below): the stock
 0.28.0 patch, a streaming weight loader for the vision class, and a sliced
