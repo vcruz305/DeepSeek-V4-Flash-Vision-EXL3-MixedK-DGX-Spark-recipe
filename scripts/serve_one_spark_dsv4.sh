@@ -102,7 +102,9 @@ ENFORCE_EAGER="${ENFORCE_EAGER:-1}"
 if [[ "$ENFORCE_EAGER" == "1" ]]; then
   ARGS+=(--enforce-eager)
 else
-  COMPILATION_CONFIG="${COMPILATION_CONFIG:-{\"mode\":0,\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}}"
+  if [[ -z "${COMPILATION_CONFIG:-}" ]]; then
+    COMPILATION_CONFIG='{"mode":0,"cudagraph_mode":"FULL_DECODE_ONLY"}'
+  fi
   ARGS+=(--compilation-config "$COMPILATION_CONFIG")
 fi
 # Opt-in torch profiler: PROFILER_DIR=/path enables /start_profile and /stop_profile
