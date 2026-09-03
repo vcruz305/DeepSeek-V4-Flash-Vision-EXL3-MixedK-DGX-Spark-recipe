@@ -14,10 +14,40 @@ Verified 2026-09-02 on one GB10 with the vision + DSpark route
 
 ```bash
 MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
-  GPU_MEM_UTIL=0.88 MAX_MODEL_LEN=65536 \
+  GPU_MEM_UTIL=0.88 MAX_MODEL_LEN=65536 ENFORCE_EAGER=0 \
   SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}' \
   bash scripts/serve_one_spark_dsv4.sh
 ```
+
+## Long context
+
+For prompts past about 100k tokens two settings are needed together, and
+neither is sufficient alone:
+
+```bash
+MAX_MODEL_LEN=262144 GPU_MEM_UTIL=0.80   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   bash scripts/serve_one_spark_dsv4.sh
+```
+
+Lower utilization leaves room for the transient prefill working set, and
+expandable segments stop the per-chunk buffers from fragmenting. With both, a
+254,291-token prompt answered correctly, recalling facts planted at 10, 50 and
+90 percent depth. That run had the non-routed weights in EXL3 as well, which
+frees several GiB; with the published pack, whose non-routed weights are BF16,
+expect a smaller KV pool at the same utilization, so check the reported pool
+size at boot and drop `MAX_MODEL_LEN` if it cannot hold one full-length request. Prefill runs at about 330 to 340 tok/s at every length, so
+time to first token is roughly 6 minutes at 128k, 10 at 192k and 13 at 256k.
+That is a throughput cost, not a memory one.
+
+`MAX_NUM_BATCHED_TOKENS` (default 2048) sets the prefill chunk. It cannot be
+raised at 256k context: the chunk working set and the KV pool draw on the same
+memory, and the engine refuses to start. Raise it only at shorter contexts.
+
+`ENFORCE_EAGER=0` drops `--enforce-eager` and passes
+`--compilation-config '{"mode":0,"cudagraph_mode":"FULL_DECODE_ONLY"}'`:
+no torch.compile, CUDA graphs for the decode steps of the target and the
+DSpark draft only. Capture takes about 3 s and 0.4 GiB, and 512-token greedy
+answers went from 17.0 to 22.1 tok/s wall on one GB10 with identical image
+and tool-call answers. Leave it unset (eager) for the first boot on a new box.
 
 The script adds `--enable-auto-tool-choice --tool-call-parser deepseek_v4
 --reasoning-parser deepseek_v4` by default. Agent harnesses need the first two
@@ -161,7 +191,8 @@ Both work against the tunnel with the settings above. Two things to know:
 | Test card | red circle, blue square, "SPARK" all named |
 | Prompt tokens, 512x384 image + short question | ~240 |
 | Decode with an image in context | 13.5-19.8 tok/s |
-| Decode, text only, 256 tokens | ~19.7 tok/s (draft acceptance 2.3-3.2 on short answers, ~1.9 on long ones) |
+| Decode, text only, 256 tokens | ~19.7 tok/s eager (draft acceptance 2.3-3.2 on short answers, ~1.9 on long ones) |
+| Decode, text only, 512 tokens, `ENFORCE_EAGER=0` | 22.1 tok/s wall, mean of three prompts (17.0 eager) |
 | Server log, KV cache | `GPU KV cache size: 298,380-328,319 tokens` at util 0.88, 64k (84,554 at 16k) |
 | Tool call round trip | `finish_reason: tool_calls`, parsed arguments, ~12 s including the thinking |
 | Spark `MemAvailable` while serving | ~9 GiB |

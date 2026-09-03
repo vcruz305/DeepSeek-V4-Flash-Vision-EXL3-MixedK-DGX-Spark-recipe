@@ -11,7 +11,8 @@ non-routed weights kept in their official source formats, and it ships the
 
 The recommended path is **vLLM nightly + the vllm-exl3 plugin** with the
 pack's **DSpark draft on**: it serves **text and images** from one process on
-one GB10 at **~20 tok/s** (verified 2026-09-02). Stock vLLM 0.28.0 is the
+one GB10 at **~22 tok/s** with CUDA graphs on (**~17-20** enforce-eager,
+verified 2026-09-02). Stock vLLM 0.28.0 is the
 text-only alternative (22-24 tok/s, no vision class). Every patch shipped here
 is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 [`docs/ROUTE_B_FORK.md`](docs/ROUTE_B_FORK.md).
@@ -25,7 +26,7 @@ is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 | **Runtime** | vLLM nightly (text + vision + DSpark draft) or stock vLLM 0.28.0 (text + DSpark draft), both from PyPI; the prebuilt fork wheels are the archived route |
 | **Plugin** | [vcruz305/vllm-exl3](https://github.com/vcruz305/vllm-exl3): the EXL3 quantization plugin's canonical home (`--quantization exl3`) |
 | **This repo** | loader patches, pack-config repair, serve script, vision probe, memory census, [`docs/LOADER_NOTES.md`](docs/LOADER_NOTES.md) and [`docs/TEST_VISION.md`](docs/TEST_VISION.md) |
-| Engine | vLLM `--quantization exl3`, TP=1, enforce-eager, fp8 KV; served model name `DSV4-Flash` |
+| Engine | vLLM `--quantization exl3`, TP=1, fp8 KV, CUDA graphs `FULL_DECODE_ONLY` (`ENFORCE_EAGER=0`); served model name `DSV4-Flash` |
 
 ---
 
@@ -37,7 +38,8 @@ Measured **2026-09-02** on one GB10 (~122 GiB visible unified memory),
 enforce-eager, greedy, `--kv-cache-dtype fp8`. Boots: the vision class alone
 (util 0.85, 16k), the same class with the pack's DSpark draft (util 0.88,
 `{"method":"dspark","num_speculative_tokens":3}`, 16k), then the draft boot
-again at `MAX_MODEL_LEN=65536` and with tool calling on.
+again at `MAX_MODEL_LEN=65536` and with tool calling on, then that boot with
+CUDA graphs (`ENFORCE_EAGER=0`, the first decode row).
 
 | Item | Value |
 |---|---|
@@ -52,7 +54,8 @@ again at `MAX_MODEL_LEN=65536` and with tool calling on.
 | Image probes | synthetic red/blue PNG (149 image tokens): "A large red square with a smaller blue square in its top-left corner"; position and colour-count questions answered correctly, with and without the draft |
 | Text | identity and technical prompts coherent, same answers as the text-only route |
 | Decode, no draft | **8.5-10.8 tok/s** (BF16 dense path); the first image request pays ~13 s of one-time TileLang/Triton JIT |
-| Decode, dspark3 | **19.7 tok/s** text (84 tokens), **16-20 tok/s** on image questions, **14.8 tok/s** on a 256-token technical answer; mean acceptance length 2.3-3.2 on short answers, 1.9 on the long one |
+| Decode, dspark3, CUDA graphs | **22.1 tok/s** wall on 512-token greedy answers (25.9 / 20.2 / 20.2 over three prompts) vs **17.0** for the same boot enforce-eager (+30%); graph capture took 3 s and 0.4 GiB, KV pool 288,883 tokens (4.41x at 64k), image and tool-call answers unchanged |
+| Decode, dspark3, enforce-eager | **19.7 tok/s** text (84 tokens), **16-20 tok/s** on image questions, **14.8 tok/s** on a 256-token technical answer; mean acceptance length 2.3-3.2 on short answers, 1.9 on the long one |
 
 Three serving-side patches make this work (see the tables below): the stock
 0.28.0 patch, a streaming weight loader for the vision class, and a sliced
@@ -96,7 +99,9 @@ In order of payoff, what is being wired next for the recommended route:
 
 1. **Dense EXL3 overlay** for the non-routed linears (vllm-exl3
    `tools/dense_overlay.py`, 1.80x on GLM), which stacks with the draft.
-2. **CUDA graphs.** Every number above is `--enforce-eager`.
+2. **CUDA graphs**: done for the recommended route (`ENFORCE_EAGER=0` in the
+   serve script, +30% decode wall at 512 tokens). The rest of the numbers
+   above are `--enforce-eager`.
 3. **Higher util** once a box has a clean first boot: the 64k draft run above
    left 8-9 GiB of host memory free at util 0.88, and the KV pool at 64k holds
    far more than one request, so 131072 is the next context step.
@@ -141,8 +146,10 @@ python scripts/patch_dsv4_vl_sm120_wide_swa.py   # nightly only: wide window row
 #     Drop SPEC_CONFIG for the no-draft class (more KV, half the speed).
 #     Tool calling and reasoning separation are on by default
 #     (TOOL_CALL_PARSER="" or REASONING_PARSER="" turn them off).
+#     ENFORCE_EAGER=0 turns CUDA graphs on (decode-only capture, +30% decode);
+#     leave it unset for a first boot on a new box.
 MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
-  GPU_MEM_UTIL=0.88 MAX_MODEL_LEN=65536 \
+  GPU_MEM_UTIL=0.88 MAX_MODEL_LEN=65536 ENFORCE_EAGER=0 \
   SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}' \
   bash scripts/serve_one_spark_dsv4.sh
 
@@ -250,6 +257,33 @@ The fork route's loader patch is described in
 [`docs/ROUTE_B_FORK.md`](docs/ROUTE_B_FORK.md).
 
 
+## Measured on one GB10, published pack, 2026-09-03
+
+Serve settings: `MAX_MODEL_LEN=65536`, `GPU_MEM_UTIL=0.88`, `ENFORCE_EAGER=0`,
+`--kv-cache-dtype fp8`, `--max-num-seqs 1`, `--max-num-batched-tokens 2048`,
+DSpark `num_speculative_tokens=3`, tool calling and reasoning parsers on.
+
+| Stage | Value |
+| --- | --- |
+| Cold load, page cache dropped first | 727 s, of which 660 s is weight reading |
+| Same load with `DROP_PAGE_CACHE=0` | 510 s |
+| Weight load with the page cache warm | 28 s |
+| GPU KV cache | 309,494 tokens, 4.72x concurrency at 65,536 |
+| Consumed memory | 97.25 GiB of 121.69 |
+| TTFT, 893-token prompt | 3.20 s (280 tok/s prefill) |
+| TTFT, 14,227-token prompt | 39.8 s (358 tok/s) |
+| TTFT, 56,893-token prompt | 157.6 s (361 tok/s) |
+| TTFT, one small image | 1.09 s |
+| Decode, 512 tokens, mean of three | 21.4 tok/s |
+| DSpark acceptance | 66.7% on a short answer, 44.4% on a 512-token answer |
+
+Boot time is dominated by weight reading, not engine init or graph capture, and
+the cold read runs at roughly 200 MB/s against about 3.5 GB/s warm. `DROP_PAGE_CACHE=0`
+skips the cache drop and saves about 150 s; the drop stays on by default because
+the startup refusal it prevents only appears when the cache is fuller.
+`LOAD_STRATEGY=prefetch` forces parallel safetensors reads, but vLLM ignores it
+for this pack: 96.47 GiB exceeds 90 percent of available RAM.
+
 ## Unified-memory gotchas (GB10)
 
 - **Page cache eats CUDA-free.** After the 95 GB download (or a previous boot),
@@ -263,6 +297,31 @@ The fork route's loader patch is described in
 - `scripts/memory_census.py` prints a disk-vs-resident per-component table,
   the tool that localized every defect above. Reach for it first when a load
   OOMs or a boot dies mid-warmup.
+- **Long prefills need headroom, not a bigger KV pool.** vLLM sizes the KV
+  cache from what is left after the weights, so raising
+  `--gpu-memory-utilization` grows the pool and shrinks the space a long
+  prefill needs to work in. On this box a 128k-token prefill was killed by the
+  memory watchdog with 10 GiB of headroom and completed with 20 GiB, while the
+  pool was already several times larger than one full-length request. If long
+  prompts die mid-prefill, reserve *less*, not more.
+- **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is required past about
+  200k tokens.** Without it the transient per-chunk buffers fragment: going
+  from a 192k to a 235k prefill consumed more than 16 GiB of extra memory,
+  which is far steeper than linear, and the watchdog fired. With it the same
+  235k prefill completed normally. CUDA graph capture is unaffected.
+- **The prefill chunk competes with the KV pool.** `MAX_NUM_BATCHED_TOKENS`
+  (new in the serve script, default 2048) could not be raised at all at 256k
+  context: at 8192 and at 4096 the engine refused to start because too little
+  KV cache was left for a single full-length request. Raise it only when
+  serving at a shorter `MAX_MODEL_LEN`.
+- **`num_speculative_tokens` must be a multiple of the pack's MTP layer
+  count.** The pack ships three, so 4 is rejected outright at startup. Of the
+  legal values, 3 measured fastest; 2 and 6 were both slower.
+- **Greedy output is not reproducible on this stack.** The same configuration
+  compared against itself at temperature 0 matched the first 64 tokens on 3 of
+  8 prompts. Chunked prefill boundaries, CUDA graph batching and speculative
+  accept and reject all change reduction order, so near-tie argmax flips. Use
+  content checks, not token identity, when comparing two configurations.
 
 ## Limitations
 

@@ -28,6 +28,12 @@ MODEL_DIR="${MODEL_DIR:-${HOME}/models/DSV4-Flash-Vision-ablit-EXL3-MixedK}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8899}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
+# Prefill chunk. The engine warns at boot that speculative decoding pins
+# max_num_scheduled_tokens to 2048 and suggests raising this.
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-2048}"
+# Set to "prefetch" to force parallel safetensors reads. vLLM disables auto-prefetch
+# on local filesystems, and the cold read here runs at about 190 MB/s without it.
+LOAD_STRATEGY="${LOAD_STRATEGY:-}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.92}"
 SERVED_NAME="${SERVED_NAME:-DSV4-Flash}"
 
@@ -48,6 +54,10 @@ export DO_NOT_TRACK=1
 # boot) shrinks CUDA-free below vLLM's startup check even though the memory is
 # reclaimable. Drop it. (nvidia-smi memory reads N/A on GB10; use
 # torch.cuda.mem_get_info to inspect.)
+# DROP_PAGE_CACHE=0 skips this. It costs about 630 s per boot: the same pack
+# loads in 28 s warm and 660 s cold, so only drop it when the startup check
+# actually fails.
+if [[ "${DROP_PAGE_CACHE:-1}" != "0" ]]; then
 python3 - "$MODEL_DIR" <<'PY'
 import glob, os, sys
 for fn in glob.glob(os.path.join(sys.argv[1], "*")):
@@ -60,9 +70,15 @@ for fn in glob.glob(os.path.join(sys.argv[1], "*")):
             pass
 print("page cache dropped for", sys.argv[1])
 PY
+else
+  echo "page cache drop skipped (DROP_PAGE_CACHE=0)"
+fi
 
-# Enforce-eager is the verified configuration (CUDA graphs untested on this
-# model). No speculative decoding: the pack's MTP layers are skipped at load.
+# ENFORCE_EAGER=1 (default) is the verified configuration. ENFORCE_EAGER=0
+# drops --enforce-eager and captures full CUDA graphs for the decode batches
+# only (no Inductor compile, prefill stays eager); override the exact
+# compilation config with COMPILATION_CONFIG. Speculative decoding is opt-in
+# below.
 ARGS=(
   serve "$MODEL_DIR"
   --served-model-name "$SERVED_NAME"
@@ -72,13 +88,29 @@ ARGS=(
   --quantization exl3
   --max-model-len "$MAX_MODEL_LEN"
   --max-num-seqs 1
-  --max-num-batched-tokens 2048
+  --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
+)
+if [[ -n "$LOAD_STRATEGY" ]]; then ARGS+=(--safetensors-load-strategy "$LOAD_STRATEGY"); fi
+ARGS+=(
   --kv-cache-dtype fp8
   --gpu-memory-utilization "$GPU_MEM_UTIL"
-  --enforce-eager
   --no-enable-prefix-caching
   --trust-remote-code
 )
+
+ENFORCE_EAGER="${ENFORCE_EAGER:-1}"
+if [[ "$ENFORCE_EAGER" == "1" ]]; then
+  ARGS+=(--enforce-eager)
+else
+  COMPILATION_CONFIG="${COMPILATION_CONFIG:-{\"mode\":0,\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}}"
+  ARGS+=(--compilation-config "$COMPILATION_CONFIG")
+fi
+# Opt-in torch profiler: PROFILER_DIR=/path enables /start_profile and /stop_profile
+# (Chrome traces land in that directory).
+if [[ -n "${PROFILER_DIR:-}" ]]; then
+  mkdir -p "$PROFILER_DIR"
+  ARGS+=(--profiler-config "{\"profiler\":\"torch\",\"torch_profiler_dir\":\"$PROFILER_DIR\"}")
+fi
 
 # Opt-in speculative decoding, e.g. SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}'
 # (the pack ships the three DSpark MTP layers as mtp.*). Off by default.
