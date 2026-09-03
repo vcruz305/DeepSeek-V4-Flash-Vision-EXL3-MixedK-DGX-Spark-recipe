@@ -12,10 +12,14 @@ if ! command -v nvcc >/dev/null 2>&1; then
   for d in /usr/local/cuda-13.0/bin /usr/local/cuda/bin; do
     if [[ -x "$d/nvcc" ]]; then export PATH="$d:$PATH"; echo "nvcc was not on PATH; added $d"; break; fi
   done
-fi
-# FlashInfer's JIT runs ninja, which pip installs into the venv's bin/.
+# Target Python virtual environment for DeepSeek-V4 Flash Vision.
+# Must use vllm-vl (0.28.1rc1.dev324 with PR #54566) which contains the native
+# DeepSeek-V4 DSpark MTP implementation (dspark.py / mtp.py), not glm53-exl3-local.
+VENV="${VENV:-$HOME/venvs/vllm-vl}"
+export PATH="${VENV}/bin:$PATH"
+
 if ! command -v ninja >/dev/null 2>&1; then
-  for d in "${VENV:-$HOME/venvs/glm53-exl3-local}/bin" "$(dirname "$(command -v vllm 2>/dev/null || echo /nonexistent/x)")"; do
+  for d in "${VENV}/bin" "$(dirname "$(command -v vllm 2>/dev/null || echo /nonexistent/x)")"; do
     if [[ -x "$d/ninja" ]]; then export PATH="$d:$PATH"; echo "ninja was not on PATH; added $d"; break; fi
   done
 fi
