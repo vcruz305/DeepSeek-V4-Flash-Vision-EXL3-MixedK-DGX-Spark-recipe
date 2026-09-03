@@ -87,7 +87,7 @@ ARGS=(
   --tensor-parallel-size 1
   --quantization exl3
   --max-model-len "$MAX_MODEL_LEN"
-  --max-num-seqs 1
+  --max-num-seqs "${MAX_NUM_SEQS:-16}"
   --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
 )
 if [[ -n "$LOAD_STRATEGY" ]]; then ARGS+=(--safetensors-load-strategy "$LOAD_STRATEGY"); fi
