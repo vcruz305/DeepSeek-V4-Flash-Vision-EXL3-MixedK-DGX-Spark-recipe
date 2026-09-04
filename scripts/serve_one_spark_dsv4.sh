@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Serve DSV4-Flash-Vision EXL3 MixedK from a local vLLM + ExLlamaV3 install on
-# one DGX Spark (GB10). Run scripts/patch_dsv4_loader.py once first.
+# one DGX Spark (GB10). Run scripts/install_local_runtime.sh (or scripts/patch_dsv4_*.py) first.
 set -euo pipefail
 
 # vLLM's has_flashinfer() returns False when nvcc is not on PATH (FlashInfer
@@ -56,6 +56,12 @@ fi
 export VLLM_NO_USAGE_STATS=1
 export DO_NOT_TRACK=1
 
+# On GB10 unified memory (128 GiB), cudaMalloc never fails, so the PyTorch caching
+# allocator can ratchet reserved memory during prefill without reusing blocks.
+# expandable_segments:True allows the allocator to recycle split memory segments,
+# enabling long-context prefills (tested up to 254k tokens) without OOM.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 # Unified-memory pre-step: the pack's page cache (from the download or a prior
 # boot) shrinks CUDA-free below vLLM's startup check even though the memory is
 # reclaimable. Drop it. (nvidia-smi memory reads N/A on GB10; use
@@ -100,9 +106,21 @@ if [[ -n "$LOAD_STRATEGY" ]]; then ARGS+=(--safetensors-load-strategy "$LOAD_STR
 ARGS+=(
   --kv-cache-dtype fp8
   --gpu-memory-utilization "$GPU_MEM_UTIL"
-  --enable-prefix-caching --long-prefill-token-threshold 1024
   --trust-remote-code
 )
+
+# Prefix caching: off by default to preserve the verified Boot 18 baseline.
+# Set ENABLE_PREFIX_CACHING=1 to enable for multi-turn conversations.
+ENABLE_PREFIX_CACHING="${ENABLE_PREFIX_CACHING:-0}"
+if [[ "$ENABLE_PREFIX_CACHING" == "1" ]]; then
+  ARGS+=(--enable-prefix-caching)
+  LONG_PREFILL_TOKEN_THRESHOLD="${LONG_PREFILL_TOKEN_THRESHOLD:-1024}"
+  if [[ "$LONG_PREFILL_TOKEN_THRESHOLD" != "0" ]]; then
+    ARGS+=(--long-prefill-token-threshold "$LONG_PREFILL_TOKEN_THRESHOLD")
+  fi
+else
+  ARGS+=(--no-enable-prefix-caching)
+fi
 
 ENFORCE_EAGER="${ENFORCE_EAGER:-1}"
 if [[ "$ENFORCE_EAGER" == "1" ]]; then

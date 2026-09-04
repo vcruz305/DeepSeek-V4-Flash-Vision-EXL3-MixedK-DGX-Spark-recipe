@@ -4,7 +4,7 @@
 
 > ### Built on the work of others
 >
-> The EXL3 trellis format, the MCG codebook and the quantization method this recipe serves are [ExLlamaV3](https://github.com/turboderp/exllamav3) by Turboderp ([@turboderp](https://github.com/turboderp)).
+> The EXL3 trellis format, the MCG codebook and the quantization method this recipe serves are [ExLlamaV3](https://github.com/turboderp-org/exllamav3) by Turboderp ([@turboderp](https://github.com/turboderp)).
 >
 > [Mia's AI Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks) ([@MiaAI-Lab](https://github.com/MiaAI-Lab), [@plotarmordev](https://github.com/plotarmordev)) are credited here because this recipe serves EXL3 packs through `vllm-exl3`, whose plugin is
 > derived from their `overlay/exl3.py`, and because their published findings on GB10 unified memory,
@@ -161,15 +161,20 @@ pip install https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm
   # pip install https://github.com/vcruz305/vllm-exl3/releases/download/v0.3.1/vllm_exl3-0.3.1-cp312-cp312-linux_aarch64.whl
   ```
 * **`flashinfer-python==0.6.18`**: Required for sparse indexer and attention operations (`pip install flashinfer-python==0.6.18`).
-* **`exllamav3>=1.4.5` with compiled `exllamav3_ext` module**: The pure-Python JIT wheel alone is not sufficient; the plugin imports the compiled C/CUDA extension:
+* **`exllamav3>=1.4.5` with compiled `exllamav3_ext` module**: The pure-Python JIT wheel alone is not sufficient; the plugin imports the compiled C/CUDA extension. Upstream ExLlamaV3 requires patching on `aarch64` to stub x86 CPU pause intrinsics and AVX paths:
   ```bash
-  git clone https://github.com/turboderp/exllamav3.git /tmp/exllamav3
-  pip install /tmp/exllamav3
+  git clone https://github.com/turboderp-org/exllamav3.git /tmp/exllamav3
+  python scripts/patch_exllamav3_aarch64.py /tmp/exllamav3/exllamav3/exllamav3_ext
+  TORCH_CUDA_ARCH_LIST="12.1a" pip install --no-build-isolation /tmp/exllamav3
   ```
   > [!IMPORTANT]
   > **Smoke test verification trap**: Testing `python -c "import exllamav3_ext"` directly in a shell will fail with `ImportError: libc10.so: cannot open shared object file: No such file or directory` because PyTorch's runtime libraries are not yet loaded. Always verify with:
   > ```bash
   > python -c "import torch, exllamav3_ext; print('exllamav3_ext OK')"
+  > ```
+  > Or run the automated verification script:
+  > ```bash
+  > python scripts/verify_runtime.py
   > ```
 
 * **Text-only alternative (stock 0.28.0)**: `pip install vllm==0.28.0 flashinfer-python==0.6.18 "vllm-exl3>=0.3.1"` (text + DSpark draft; skips vision class).
@@ -177,20 +182,44 @@ pip install https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm
 
 ## Quick start
 
+### 0. Check preflight and install runtime
+
+Run the sub-second preflight check first to ensure your environment satisfies the DGX Spark requirements:
 ```bash
-# 0) Environment setup (Python 3.12, CUDA 13 toolkit, and wheels)
+python scripts/preflight.py
+```
+
+**Recommended (Automated Setup):**
+Run the automated runtime installer, which clones canonical ExLlamaV3, applies the `aarch64` CPU/intrinsics patch, builds `exllamav3_ext` with SM121 support, and verifies the environment:
+```bash
+bash scripts/install_local_runtime.sh
+```
+
+<details>
+<summary>Manual installation commands instead</summary>
+
+```bash
+# Environment setup (Python 3.12, CUDA 13 toolkit, and wheels)
 python3.12 -m venv ~/venvs/vllm-vl
 source ~/venvs/vllm-vl/bin/activate
-pip install --upgrade pip setuptools wheel
+pip install --upgrade pip setuptools wheel ninja
 export PATH=/usr/local/cuda-13.0/bin:$PATH
 
 # Install verified vLLM nightly wheel (PR #54566):
 pip install https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm-0.28.1rc1.dev324%2Bga56654d6d-cp38-abi3-manylinux_2_28_aarch64.whl
 
-# Install companion packages (FlashInfer, vllm-exl3 plugin v0.3.1+, and ExLlamaV3):
+# Install companion packages:
 pip install flashinfer-python==0.6.18 "vllm-exl3>=0.3.1"
-git clone https://github.com/turboderp/exllamav3.git /tmp/exllamav3 && pip install /tmp/exllamav3
-python -c "import torch, exllamav3_ext; print('exllamav3_ext OK')"
+
+# Clone canonical ExLlamaV3, patch for aarch64, and compile:
+git clone --depth 1 https://github.com/turboderp-org/exllamav3.git /tmp/exllamav3
+python scripts/patch_exllamav3_aarch64.py /tmp/exllamav3/exllamav3/exllamav3_ext
+TORCH_CUDA_ARCH_LIST="12.1a" pip install --no-build-isolation /tmp/exllamav3
+
+# Verify runtime:
+python scripts/verify_runtime.py
+```
+</details>
 
 # 1) Download the pack (resumable, multi-stream)
 hf download vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK \
@@ -423,7 +452,7 @@ for this pack: 96.47 GiB exceeds 90 percent of available RAM.
 
 This work builds on other people's, and two projects in particular.
 
-**ExLlamaV3 by Turboderp ([@turboderp](https://github.com/turboderp/exllamav3)).** The EXL3 trellis
+**ExLlamaV3 by Turboderp ([@turboderp](https://github.com/turboderp-org/exllamav3)).** The EXL3 trellis
 format, the MCG codebook and the quantization method are theirs. MIT, Copyright (c) 2025 Turboderp.
 
 **GLM-5.3-Flash-EXL3-2x-DGX-Sparks by Mia's AI Lab
