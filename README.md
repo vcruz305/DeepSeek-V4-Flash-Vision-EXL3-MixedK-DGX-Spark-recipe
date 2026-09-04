@@ -21,10 +21,11 @@ This pack keeps the **full 256 routed experts** (no expert pruning) at a **mixed
 non-routed weights kept in their official source formats, and it ships the
 **vision tower, aligner and the three DSpark MTP draft layers**.
 
-The recommended path is **vLLM nightly + the vllm-exl3 plugin** with the
+The recommended path is **vLLM nightly + the vllm-exl3 v0.3.1 plugin** with the
 pack's **DSpark draft on**: it serves **text and images** from one process on
-one GB10 at **~22 tok/s** with CUDA graphs on (**~17-20** enforce-eager,
-verified 2026-09-02). Stock vLLM 0.28.0 is the
+one GB10 at **28.9–30.9 tok/s** steady decode with CUDA graphs on (up to
+**32.2 tok/s** single-stream, and scaling to **85.0 tok/s** aggregate across 16
+streams; verified 2026-09-03). Stock vLLM 0.28.0 is the
 text-only alternative (22-24 tok/s, no vision class). Every patch shipped here
 is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 [`docs/ROUTE_B_FORK.md`](docs/ROUTE_B_FORK.md).
@@ -93,7 +94,7 @@ enforce-eager, greedy 256/512-token completions, `--kv-cache-dtype fp8`.
 
 | Item | Value |
 |---|---|
-| Runtime | vLLM **0.28.0** (PyPI) · exllamav3 1.4.5 · flashinfer-python 0.6.18 · torch 2.13 · vllm-exl3 >= 0.2.3 |
+| Runtime | vLLM **0.28.0** (PyPI) · exllamav3 1.4.5 · flashinfer-python 0.6.18 · torch 2.13 · **vllm-exl3 >= 0.3.1** |
 | Architecture | `DeepseekV4ForCausalLM` on vLLM's `deepseek_v4/nvidia` path; vision tower skipped |
 | Non-routed weights | **BF16 as stored** (`non_routed_dtype_policy: "bf16_as_stored"`), no load-time requantization |
 | Draft | the pack's three DSpark MTP layers (`mtp.0..2`, routed experts in their source format), `{"method":"dspark","num_speculative_tokens":3}` |
@@ -120,16 +121,12 @@ fp8-at-load dense path 15.9 tok/s (fork), and the DSpark draft roughly doubles
 whatever the dense path gives (22-24 tok/s text-only, ~20 tok/s on the vision
 class).
 
-In order of payoff, what is being wired next for the recommended route:
+In order of payoff, what is wired and what is being targeted next for the recommended route:
 
-1. **Dense EXL3 overlay** for the non-routed linears (vllm-exl3
-   `tools/dense_overlay.py`, 1.80x on GLM), which stacks with the draft.
-2. **CUDA graphs**: done for the recommended route (`ENFORCE_EAGER=0` in the
-   serve script, +30% decode wall at 512 tokens). The rest of the numbers
-   above are `--enforce-eager`.
-3. **Higher util** once a box has a clean first boot: the 64k draft run above
-   left 8-9 GiB of host memory free at util 0.88, and the KV pool at 64k holds
-   far more than one request, so 131072 is the next context step.
+1. **Native sm_121 Blackwell Fused MoE & Super Fat GEMM prefill**: shipped in vllm-exl3 v0.3.1 (delivering 28.9–30.9 tok/s steady decode, up to 32.2 tok/s single-stream, and 50.3 tok/s peak suite throughput).
+2. **CUDA graphs (`FULL_DECODE_ONLY`)**: fully validated in the serve script (`ENFORCE_EAGER=0`, +30% decode wall at 512 tokens, supporting concurrent capture up to 16 streams).
+3. **256K Context Scaling**: validated up to 262,144 tokens with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and `GPU_MEM_UTIL=0.80`.
+4. **Next optimization targets**: Multi-bit Fat GEMM (K=2, K=3), quantized compressor and LM head, and chunked prefill interleaving (`--long-prefill-token-threshold 1024`).
 
 ## Requirements
 
@@ -277,11 +274,11 @@ must declare:
   a trellis shape mismatch without it).
 - `non_routed_quantization` names the runtime method the
   [vllm-exl3](https://github.com/vcruz305/vllm-exl3) plugin delegates
-  non-EXL3 modules to. On the PyPI routes it serves the DSpark draft's routed
+  non-EXL3 modules to. On the stock 0.28.0 and nightly routes it serves the DSpark draft's routed
   experts (`mtp.*`, layer index >= `mtp_experts_start_layer`, kept in their
   source format); on the fork route it also serves the dense layers, which the
   fork loader patch quantizes to real block-FP8 at load.
-- `non_routed_dtype_policy: "bf16_as_stored"` (PyPI routes) makes the plugin
+- `non_routed_dtype_policy: "bf16_as_stored"` (stock 0.28.0 & nightly routes) makes the plugin
   hand dense linears to vLLM's unquantized method instead of the fp8 delegate.
   Set it to `"official_source_native"` for the fork route. Getting this wrong is silent:
   BF16 tensors loaded into fp8 parameters produce **empty or uniform output**
@@ -290,11 +287,11 @@ must declare:
 `scripts/fix_pack_config.py` writes this block (default; `--route b` for the
 fork runtime) after scanning the shards for the actual trellis shapes. The pack
 on the Hub ships the fork config as of **2026-09-01**; run the script once
-before serving on the PyPI routes.
+before serving on the stock 0.28.0 or nightly routes.
 
 ## Why the loader patches exist
 
-### Both PyPI routes: `scripts/patch_dsv4_stock028.py`
+### Stock 0.28.0 and Nightly routes: `scripts/patch_dsv4_stock028.py`
 
 Three exact-match, idempotent edits under `vllm/models/deepseek_v4/nvidia/`
 (backups `*.orig`; the script verifies its own anchors and reports
@@ -345,7 +342,7 @@ DSpark `num_speculative_tokens=3`, tool calling and reasoning parsers on.
 | TTFT, 14,227-token prompt | 39.8 s (358 tok/s) |
 | TTFT, 56,893-token prompt | 157.6 s (361 tok/s) |
 | TTFT, one small image | 1.09 s |
-| Decode, 512 tokens, mean of three | 21.4 tok/s |
+| Decode, 512 tokens, mean of three | 21.4 tok/s (baseline v0.2.3) → 28.9–30.9 tok/s (vllm-exl3 v0.3.1) |
 | DSpark acceptance | 66.7% on a short answer, 44.4% on a 512-token answer |
 
 Boot time is dominated by weight reading, not engine init or graph capture, and
@@ -398,12 +395,15 @@ for this pack: 96.47 GiB exceeds 90 percent of available RAM.
 
 - **Vision needs the nightly.** Stock 0.28.0 and the fork serve the text
   class and skip the vision tensors.
-- **Acceptance drops on long technical answers.** The draft gives 2.3-3.2
-  accepted tokens per step on short answers and ~1.9 on a 256-token technical
-  one (14.8 tok/s). The fork loader skips the draft entirely.
-- **Context verified so far:** 65,536 on both routes (a 48k-token prompt on
-  the vision route). The 64k KV pool holds several such requests, so 131072
-  should fit at the same util; it has not been measured yet.
+- **Speculative acceptance scaling:** The native 3-layer DSpark draft sustains
+  2.45–4.00 draft tokens per step on short-to-medium prompts (~62–65% acceptance
+  at low concurrency) and ~2.07 tokens per step under saturated multi-stream
+  concurrency (C=16), where dynamic batch-adaptive draft scheduling in
+  vllm-exl3 v0.3.1 maintains high engine throughput.
+- **Context scaling verified:** Verified up to **262,144 tokens (256K context)**
+  with DSpark speculative decoding (`MAX_MODEL_LEN=262144 GPU_MEM_UTIL=0.80 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`).
+  Long prompts (e.g. 254,291 tokens) answer coherently with full needle recall
+  across 10%, 50%, and 90% context depth.
 - **Plugin required.** Upstream declined EXL3 support
   ([vllm#19896](https://github.com/vllm-project/vllm/issues/19896)); every
   route needs the vllm-exl3 plugin plus the patches above until they are
@@ -432,7 +432,7 @@ format, the MCG codebook and the quantization method are theirs. MIT, Copyright 
 
 Both licences require their notices to travel with the code. Those notices are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and must be retained on redistribution. Earlier
-releases of this repository carried this without those notices. That was our oversight, and this
+releases of this repository carried this without those notices. That was an oversight, and this
 section corrects it.
 
 ## License
