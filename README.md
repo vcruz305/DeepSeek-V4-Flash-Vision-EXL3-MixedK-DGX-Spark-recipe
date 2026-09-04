@@ -134,39 +134,81 @@ In order of payoff, what is being wired next for the recommended route:
 ## Requirements
 
 - One DGX Spark (GB10 / SM121), NVMe with ~100 GB free for the pack.
-- Text + vision: a vLLM **nightly** aarch64 wheel that contains
-  [vllm#54566](https://github.com/vllm-project/vllm/pull/54566) (verified with
-  `0.28.1rc1.dev324`), `exllamav3>=1.4.5` **with its compiled `exllamav3_ext`
-  module** (the pure-Python JIT wheel alone is not enough: the plugin imports the
-  compiled module, so build exllamav3 from source or copy the `.so` from an
-  install that has it), `flashinfer-python==0.6.18`, and the
-  [vllm-exl3](https://github.com/vcruz305/vllm-exl3) plugin **>= 0.2.3**.
-- Text only with the DSpark draft: `vllm==0.28.0` from PyPI, `exllamav3>=1.4.5`,
-  `flashinfer-python==0.6.18` (older FlashInfer rejects this model's
-  `index_topk=192`), and the plugin **>= 0.2.3** (the `bf16_as_stored` policy).
-- Fork runtime: see [`docs/ROUTE_B_FORK.md`](docs/ROUTE_B_FORK.md).
+- **Python 3.12 virtualenv** (the standard path used by serving scripts is `~/venvs/vllm-vl`).
 - **`nvcc` and `ninja` on PATH** when serving. FlashInfer JIT-compiles its
   kernels on this box; without `nvcc` the only usable attention backends are
   rejected at engine init and vLLM dies with "No valid attention backend found".
-  `export PATH=/usr/local/cuda-13.0/bin:$PATH` and use the venv's `ninja`.
+  `export PATH=/usr/local/cuda-13.0/bin:$PATH` and ensure ninja is present.
+
+### Verified vLLM Nightly Wheel (Text + Vision + DSpark MTP)
+
+To serve both text and images with the 3-layer DSpark MTP speculative draft, install the exact verified nightly wheel built from upstream PR [vllm#54566](https://github.com/vllm-project/vllm/pull/54566):
+
+* **Direct URL**: [`https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm-0.28.1rc1.dev324%2Bga56654d6d-cp38-abi3-manylinux_2_28_aarch64.whl`](https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm-0.28.1rc1.dev324%2Bga56654d6d-cp38-abi3-manylinux_2_28_aarch64.whl)
+* **Wheel Filename**: `vllm-0.28.1rc1.dev324+ga56654d6d-cp38-abi3-manylinux_2_28_aarch64.whl`
+* **Upstream Commit**: `a56654d6de060495ff2db3b1d9ff0b187084d1a9` (`v0.28.1rc1.dev324`)
+* **SHA256**: `59e916eb9ba9a9745907e4fa44586081df2a04818f6368c13df83ea24b18586b`
+* **ABI Note (`cp38-abi3` vs `cp312`)**: The wheel filename contains `-cp38-abi3-`, which denotes CPython's Limited API / Stable ABI (PEP 384). This means the wheel is binary-compatible with **any CPython version ≥ 3.8**, including Python 3.12. **Use Python 3.12**: The DGX Spark GB10 (`sm_121` Blackwell) system environment, PyTorch 2.13/2.6, and CUDA 13.0 libraries are compiled for Python 3.12. Do not use Python 3.8.
+
+**Direct install command:**
+```bash
+pip install https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm-0.28.1rc1.dev324%2Bga56654d6d-cp38-abi3-manylinux_2_28_aarch64.whl
+```
+
+### Companion Libraries
+
+* **`vllm-exl3` >= 0.3.1**: The EXL3 quantization plugin. Release [v0.3.1](https://github.com/vcruz305/vllm-exl3/releases/tag/v0.3.1) includes native `sm_121` Blackwell fused MoE and Super Fat GEMM prefill kernels.
+  ```bash
+  pip install "vllm-exl3>=0.3.1"
+  # Or from release wheel:
+  # pip install https://github.com/vcruz305/vllm-exl3/releases/download/v0.3.1/vllm_exl3-0.3.1-cp312-cp312-linux_aarch64.whl
+  ```
+* **`flashinfer-python==0.6.18`**: Required for sparse indexer and attention operations (`pip install flashinfer-python==0.6.18`).
+* **`exllamav3>=1.4.5` with compiled `exllamav3_ext` module**: The pure-Python JIT wheel alone is not sufficient; the plugin imports the compiled C/CUDA extension:
+  ```bash
+  git clone https://github.com/turboderp/exllamav3.git /tmp/exllamav3
+  pip install /tmp/exllamav3
+  ```
+  > [!IMPORTANT]
+  > **Smoke test verification trap**: Testing `python -c "import exllamav3_ext"` directly in a shell will fail with `ImportError: libc10.so: cannot open shared object file: No such file or directory` because PyTorch's runtime libraries are not yet loaded. Always verify with:
+  > ```bash
+  > python -c "import torch, exllamav3_ext; print('exllamav3_ext OK')"
+  > ```
+
+* **Text-only alternative (stock 0.28.0)**: `pip install vllm==0.28.0 flashinfer-python==0.6.18 "vllm-exl3>=0.3.1"` (text + DSpark draft; skips vision class).
+* **Fork runtime**: see [`docs/ROUTE_B_FORK.md`](docs/ROUTE_B_FORK.md).
 
 ## Quick start
 
 ```bash
-# 0) Download the pack (resumable, multi-stream)
+# 0) Environment setup (Python 3.12, CUDA 13 toolkit, and wheels)
+python3.12 -m venv ~/venvs/vllm-vl
+source ~/venvs/vllm-vl/bin/activate
+pip install --upgrade pip setuptools wheel
+export PATH=/usr/local/cuda-13.0/bin:$PATH
+
+# Install verified vLLM nightly wheel (PR #54566):
+pip install https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm-0.28.1rc1.dev324%2Bga56654d6d-cp38-abi3-manylinux_2_28_aarch64.whl
+
+# Install companion packages (FlashInfer, vllm-exl3 plugin v0.3.1+, and ExLlamaV3):
+pip install flashinfer-python==0.6.18 "vllm-exl3>=0.3.1"
+git clone https://github.com/turboderp/exllamav3.git /tmp/exllamav3 && pip install /tmp/exllamav3
+python -c "import torch, exllamav3_ext; print('exllamav3_ext OK')"
+
+# 1) Download the pack (resumable, multi-stream)
 hf download vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK \
   --local-dir ~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK
 
-# 1) Write the serving config (idempotent; scans the shards for layer_bits)
+# 2) Write the serving config (idempotent; scans the shards for layer_bits)
 python scripts/fix_pack_config.py ~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK
 
-# 2) Patch the runtime's DeepSeek-V4 files (idempotent, exact anchors, backups
+# 3) Patch the runtime's DeepSeek-V4 files (idempotent, exact anchors, backups
 #    next to each file; each script takes an optional path to site-packages/vllm)
 python scripts/patch_dsv4_stock028.py            # stock 0.28.0 and the nightly
 python scripts/patch_dsv4_vl_stream_load.py      # nightly only: stream the vision-class load
 python scripts/patch_dsv4_vl_sm120_wide_swa.py   # nightly only: wide window rows on SM120/121
 
-# 3a) Serve text + vision with the DSpark draft (nightly). Verified settings
+# 4a) Serve text + vision with the DSpark draft (nightly). Verified settings
 #     (64k context; use MAX_MODEL_LEN=16384 for a conservative first boot).
 #     Drop SPEC_CONFIG for the no-draft class (more KV, half the speed).
 #     Tool calling and reasoning separation are on by default
@@ -178,12 +220,12 @@ MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
   SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}' \
   bash scripts/serve_one_spark_dsv4.sh
 
-# 3b) Serve text only with the DSpark draft (stock 0.28.0)
+# 4b) Serve text only with the DSpark draft (stock 0.28.0)
 MODEL_DIR=~/models/DSV4-Flash-Vision-ablit-EXL3-MixedK \
   SPEC_CONFIG='{"method":"dspark","num_speculative_tokens":3}' \
   bash scripts/serve_one_spark_dsv4.sh
 
-# 4) Smoke: text, then an image through the chat endpoint
+# 5) Smoke: text, then an image through the chat endpoint
 curl -s http://127.0.0.1:8899/v1/completions -H 'content-type: application/json' \
   -d '{"model":"DSV4-Flash","prompt":"The capital of France is","max_tokens":32,"temperature":0}'
 
@@ -191,7 +233,7 @@ IMG=$(base64 -w0 test.png)
 curl -s http://127.0.0.1:8899/v1/chat/completions -H 'content-type: application/json' \
   -d "{\"model\":\"DSV4-Flash\",\"max_tokens\":64,\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,$IMG\"}},{\"type\":\"text\",\"text\":\"Describe this image in one sentence.\"}]}]}"
 
-# 5) Or the one-file probe: draws a test card when no image is given, prints
+# 6) Or the one-file probe: draws a test card when no image is given, prints
 #    the answer plus token counts and tok/s (any machine with Python and Pillow)
 python scripts/vision_probe.py                      # test card
 python scripts/vision_probe.py photo.jpg "What is this?" http://127.0.0.1:8899
@@ -200,7 +242,11 @@ python scripts/vision_probe.py photo.jpg "What is this?" http://127.0.0.1:8899
 The model thinks by default. With the reasoning parser on (the default) the
 thinking arrives in `reasoning_content` and `content` holds only the answer;
 with `REASONING_PARSER=""` the answer follows a `</think>` marker inside
-`content`. Testing from another machine (port forward, harness settings,
+`content`.
+
+> [!TIP]
+> **Tool-Calling Benchmarks & Reasoning Tokens**: External tool harnesses (e.g. BFCL or `tool-eval-bench`) often set small `max_tokens` (512–1,024) expecting immediate tool JSON. Because DeepSeek-V4 reasons before generating tool calls, generations can hit the token limit inside reasoning (`trunc-in-think`), resulting in 0 tool calls emitted. For pure tool benchmarks without reasoning support, either disable thinking by passing `"chat_template_kwargs": {"enable_thinking": false}` in completions, or raise `max_tokens` to $\ge 8,192$.
+Testing from another machine (port forward, harness settings,
 Hermes Agent and Open WebUI, healthy-server numbers, troubleshooting) is
 written up in [`docs/TEST_VISION.md`](docs/TEST_VISION.md).
 
