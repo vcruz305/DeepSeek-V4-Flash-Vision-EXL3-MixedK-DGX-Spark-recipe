@@ -35,8 +35,8 @@ is small, exact-anchored and idempotent. The older fork-runtime route is kept in
 | What | Where |
 |---|---|
 | **Pack** | [vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK](https://huggingface.co/vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK): 48 shards, ~95 GB, full 256 experts |
-| **Runtime** | vLLM nightly (text + vision + DSpark draft) or stock vLLM 0.28.0 (text + DSpark draft), both from PyPI; the prebuilt fork wheels are the archived route |
-| **Plugin** | [vcruz305/vllm-exl3](https://github.com/vcruz305/vllm-exl3): the EXL3 quantization plugin's canonical home (`--quantization exl3`) |
+| **Runtime** | [vLLM nightly 0.28.1rc1.dev324 wheel](https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm-0.28.1rc1.dev324%2Bga56654d6d-cp38-abi3-manylinux_2_28_aarch64.whl) from wheels.vllm.ai (text + vision + DSpark draft; contains PR #54566) or stock vLLM 0.28.0 from PyPI (text + DSpark draft); the prebuilt fork wheels are the archived route |
+| **Plugin** | [vcruz305/vllm-exl3 v0.3.1](https://github.com/vcruz305/vllm-exl3/releases/tag/v0.3.1): the EXL3 quantization plugin's canonical home (`--quantization exl3`) with native sm_121 Blackwell fused MoE and Super Fat GEMM prefill |
 | **This repo** | loader patches, pack-config repair, serve script, vision probe, memory census, [`docs/LOADER_NOTES.md`](docs/LOADER_NOTES.md) and [`docs/TEST_VISION.md`](docs/TEST_VISION.md) |
 | Engine | vLLM `--quantization exl3`, TP=1, fp8 KV, CUDA graphs `FULL_DECODE_ONLY` (`ENFORCE_EAGER=0`); served model name `DSV4-Flash` |
 
