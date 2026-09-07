@@ -381,6 +381,25 @@ the startup refusal it prevents only appears when the cache is fuller.
 `LOAD_STRATEGY=prefetch` forces parallel safetensors reads, but vLLM ignores it
 for this pack: 96.47 GiB exceeds 90 percent of available RAM.
 
+## Quality: how much of the original model the pack keeps
+
+Measured 2026-09-05 to 2026-09-07 by [GaelicThunder](https://github.com/GaelicThunder) on one GB10, with
+this pack's tensors served through the sibling sparkinfer-route recipe (same expert tensors; non-routed
+tensors block-FP8 at load there, BF16 here). Paired per-token log-likelihood on 64,859 frozen tokens
+(wikitext · gsm8k · Python) against the abliterated Vision-Exp source at release precision, served on a
+2×H200 pod; "% kept" is the geometric mean of p_pack / p_original, 100 % = the original.
+
+| % of the original's token probability kept | prose (wikitext) | math (gsm8k) | code | all |
+|---|---|---|---|---|
+| **MixedK** (this pack) | 76 % | 94 % | 85 % | **81 %** |
+| Kalibrated Vision Exp (this pack + 22 expert layers at a calibrated 3-bit, 100 GiB resident) | 87 % | 99.8 % | 92 % | **90 %** |
+
+Accuracy gates on the pack, two boots: MMLU-Pro 64.3 % on 251 items in two option orders, MATH-500 level 5
+50/60, needle 9/9 at 4k / 32k / 131k, perplexity 4.545 on 8 fixed passages. Method, error bars, the
+serving-path caveat and what the numbers do not measure: [`docs/QUALITY.md`](docs/QUALITY.md). The 22-layer
+extension, which layers and why, and what running it on this route would take:
+[`docs/KALIBRATED.md`](docs/KALIBRATED.md). Every number has a JSON receipt in [`receipts/`](receipts/).
+
 ## Unified-memory gotchas (GB10)
 
 - **Page cache eats CUDA-free.** After the 95 GB download (or a previous boot),
@@ -443,6 +462,8 @@ for this pack: 96.47 GiB exceeds 90 percent of available RAM.
 | Repo | What |
 |---|---|
 | [DSV4-Flash-Vision-ablit-EXL3-MixedK](https://huggingface.co/vcruz305/DSV4-Flash-Vision-ablit-EXL3-MixedK) | the pack this recipe serves |
+| [DeepSeek-V4-Flash-Vision-Exp-ablit-EXL3-Kalibrated](https://huggingface.co/GaelicThunder/DeepSeek-V4-Flash-Vision-Exp-ablit-EXL3-Kalibrated) | this pack with 22 more expert layers at a calibrated 3-bit (GaelicThunder), rank-sliced tp1 layout; [`docs/KALIBRATED.md`](docs/KALIBRATED.md) |
+| [DeepSeek-V4-Flash-Vision-One-DGX-Spark](https://github.com/GaelicThunder/DeepSeek-V4-Flash-Vision-One-DGX-Spark) | sibling single-Spark recipe on the sparkinfer image, and the scripts behind [`docs/QUALITY.md`](docs/QUALITY.md) |
 | [vllm-exl3](https://github.com/vcruz305/vllm-exl3) | the EXL3 plugin: source, releases, issues |
 | [GLM-5.3-Flash-EXL3-K2-spark-vllm](https://huggingface.co/vcruz305/GLM-5.3-Flash-EXL3-K2-spark-vllm) | prebuilt GB10 fork runtime wheels (archived route) |
 | [GLM-5.3-Flash-EXL3-K2-DGX-Spark-recipe](https://github.com/vcruz305/GLM-5.3-Flash-EXL3-K2-DGX-Spark-recipe) | the sibling GLM recipe |

@@ -1,0 +1,57 @@
+{
+ "base": "http://127.0.0.1:30021",
+ "model": "deepseek-v4-flash-vision-exp",
+ "when": "2026-09-07T04:13:37",
+ "texts": {
+  "it_prosa_1": {
+   "nll": 1.5314,
+   "ppl": 4.625,
+   "tokens": 122,
+   "sec": 0.43
+  },
+  "it_prosa_2": {
+   "nll": 1.6257,
+   "ppl": 5.082,
+   "tokens": 117,
+   "sec": 0.4
+  },
+  "it_tecnico": {
+   "nll": 2.031,
+   "ppl": 7.621,
+   "tokens": 98,
+   "sec": 0.34
+  },
+  "en_prose_1": {
+   "nll": 2.0553,
+   "ppl": 7.809,
+   "tokens": 83,
+   "sec": 0.36
+  },
+  "en_prose_2": {
+   "nll": 2.1792,
+   "ppl": 8.839,
+   "tokens": 75,
+   "sec": 0.33
+  },
+  "en_tech": {
+   "nll": 2.3689,
+   "ppl": 10.685,
+   "tokens": 89,
+   "sec": 0.35
+  },
+  "code_py": {
+   "nll": 0.2506,
+   "ppl": 1.285,
+   "tokens": 159,
+   "sec": 0.45
+  },
+  "code_bash": {
+   "nll": 0.8793,
+   "ppl": 2.409,
+   "tokens": 73,
+   "sec": 0.33
+  }
+ },
+ "mean_nll": 1.5012,
+ "mean_ppl": 4.487
+}
