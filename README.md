@@ -160,6 +160,13 @@ pip install https://wheels.vllm.ai/a56654d6de060495ff2db3b1d9ff0b187084d1a9/vllm
   # Or from release wheel:
   # pip install https://github.com/vcruz305/vllm-exl3/releases/download/v0.3.1/vllm_exl3-0.3.1-cp312-cp312-linux_aarch64.whl
   ```
+  This recipe was measured with `vllm-exl3` 0.3.x. The `v0.3.1` tag's
+  `exl3.py` does not import (a module docstring sits above `from __future__
+  import annotations`); use the `v0.3.0` tag or install from `main` instead.
+  `main` now carries the unreleased `0.4.0`, with native ExLlamaV3 pack
+  support and the fixes listed in
+  [vllm-exl3's CHANGELOG](https://github.com/vcruz305/vllm-exl3/blob/main/CHANGELOG.md);
+  a `0.4.0` release will follow.
 * **`flashinfer-python==0.6.18`**: Required for sparse indexer and attention operations (`pip install flashinfer-python==0.6.18`).
 * **`exllamav3>=1.4.5` with compiled `exllamav3_ext` module**: The pure-Python JIT wheel alone is not sufficient; the plugin imports the compiled C/CUDA extension. Upstream ExLlamaV3 requires patching on `aarch64` to stub x86 CPU pause intrinsics and AVX paths:
   ```bash
@@ -447,6 +454,7 @@ for this pack: 96.47 GiB exceeds 90 percent of available RAM.
 | [GLM-5.3-Flash-EXL3-K2-spark-vllm](https://huggingface.co/vcruz305/GLM-5.3-Flash-EXL3-K2-spark-vllm) | prebuilt GB10 fork runtime wheels (archived route) |
 | [GLM-5.3-Flash-EXL3-K2-DGX-Spark-recipe](https://github.com/vcruz305/GLM-5.3-Flash-EXL3-K2-DGX-Spark-recipe) | the sibling GLM recipe |
 | [GLM-5.3-Flash-EXL3-K2K3-mix-DGX-Spark-recipe](https://github.com/vcruz305/GLM-5.3-Flash-EXL3-K2K3-mix-DGX-Spark-recipe) | the GLM mixed-K sibling |
+| [Qwen3.8-Flash-Next-EXL3-DGX-Spark-recipe](https://github.com/vcruz305/Qwen3.8-Flash-Next-EXL3-DGX-Spark-recipe) | sibling recipe on the same plugin: Qwen3.8-Flash-Next, native ExLlamaV3 pack (3.05bpw), one Spark |
 
 ## Credits and upstream work
 
